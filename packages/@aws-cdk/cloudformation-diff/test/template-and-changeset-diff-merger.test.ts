@@ -97,6 +97,78 @@ describe('fullDiff tests that include changeset', () => {
     expect(webAcl.propertyUpdates.DefaultAction.isDifferent).toBe(true);
   });
 
+  test('tag changes reported under the Tags attribute are not hidden when the tag list has a deploy-time value', () => {
+    // GIVEN - a static tag changes in a tag list that also contains a Ref
+    const tags = (role: string) => [
+      { Key: 'customer', Value: 'clevertap' },
+      { Key: 'ecs_cluster', Value: { Ref: 'EcsCluster' } },
+      { Key: 'role', Value: role },
+    ];
+    const currentTemplate = {
+      Resources: {
+        Instance: { Type: 'AWS::EC2::Instance', Properties: { InstanceType: 'r6g.large', Tags: tags('logprocessor') } },
+      },
+    };
+    const newTemplate = {
+      Resources: {
+        Instance: { Type: 'AWS::EC2::Instance', Properties: { InstanceType: 'r6g.large', Tags: tags('redis') } },
+      },
+    };
+
+    // WHEN - CloudFormation reports the tag change with Attribute 'Tags' and no Name
+    const differences = fullDiff(currentTemplate, newTemplate, {
+      Changes: [
+        {
+          Type: 'Resource',
+          ResourceChange: {
+            Action: 'Modify',
+            LogicalResourceId: 'Instance',
+            ResourceType: 'AWS::EC2::Instance',
+            Replacement: 'False',
+            Scope: ['Tags'],
+            Details: [
+              {
+                Target: { Attribute: 'Tags', RequiresRecreation: 'Never' },
+                Evaluation: 'Static',
+                ChangeSource: 'DirectModification',
+              },
+            ],
+          },
+        },
+      ],
+    });
+
+    // THEN
+    expect(differences.differenceCount).toBe(1);
+    const instance = differences.resources.get('Instance');
+    expect(instance.propertyUpdates.Tags.isDifferent).toBe(true);
+    expect(instance.changeImpact).toBe(ResourceImpact.WILL_UPDATE);
+  });
+
+  test('tag changes without RequiresRecreation are treated as in-place updates', () => {
+    // GIVEN
+    const templateAndChangeSetDiffMerger = new TemplateAndChangeSetDiffMerger({
+      changeSet: {
+        Changes: [
+          {
+            Type: 'Resource',
+            ResourceChange: {
+              Action: 'Modify',
+              LogicalResourceId: 'Instance',
+              ResourceType: 'AWS::EC2::Instance',
+              Details: [{ Target: { Attribute: 'Tags' }, Evaluation: 'Static', ChangeSource: 'DirectModification' }],
+            },
+          },
+        ],
+      },
+    });
+
+    // THEN
+    expect(templateAndChangeSetDiffMerger.changeSetResources.Instance.propertyReplacementModes).toEqual({
+      Tags: { replacementMode: 'Never' },
+    });
+  });
+
   test('changeset replacements are respected', () => {
     // GIVEN
     const currentTemplate = {

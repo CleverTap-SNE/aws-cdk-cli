@@ -72,9 +72,12 @@ export class TemplateAndChangeSetDiffMerger {
 
       const propertyReplacementModes: types.PropertyReplacementModeMap = {};
       for (const propertyChange of resourceChange.ResourceChange.Details ?? []) { // Details is only included if resourceChange.Action === 'Modify'
-        if (propertyChange.Target?.Attribute === 'Properties' && propertyChange.Target.Name) {
-          propertyReplacementModes[propertyChange.Target.Name] = {
-            replacementMode: TemplateAndChangeSetDiffMerger.determineChangeSetReplacementMode(propertyChange),
+        const propertyName = changeSetPropertyName(propertyChange);
+        if (propertyName) {
+          propertyReplacementModes[propertyName] = {
+            replacementMode: propertyChange.Target?.Attribute === 'Tags' && propertyChange.Target.RequiresRecreation === undefined
+              ? 'Never' // Tag changes are applied in place
+              : TemplateAndChangeSetDiffMerger.determineChangeSetReplacementMode(propertyChange),
           };
         }
       }
@@ -371,15 +374,16 @@ export class TemplateAndChangeSetDiffMerger {
 
     for (const detail of rc.Details ?? []) {
       const target = detail.Target;
-      if (target?.Attribute !== 'Properties' || !target.Name) {
+      const propertyName = changeSetPropertyName(detail);
+      if (!target || !propertyName) {
         continue;
       }
       if (target.BeforeValue !== undefined) {
-        oldProperties[target.Name] = tryJsonParse(target.BeforeValue);
+        oldProperties[propertyName] = tryJsonParse(target.BeforeValue);
         hasData = true;
       }
       if (target.AfterValue !== undefined) {
-        newProperties[target.Name] = tryJsonParse(target.AfterValue);
+        newProperties[propertyName] = tryJsonParse(target.AfterValue);
         hasData = true;
       }
     }
@@ -424,7 +428,7 @@ export class TemplateAndChangeSetDiffMerger {
 
     for (const detail of resourceChange?.Details ?? []) {
       const target = detail.Target;
-      if (target?.Attribute === 'Properties' && target.Name === propertyName) {
+      if (target && changeSetPropertyName(detail) === propertyName) {
         if (target.BeforeValue !== undefined) {
           oldValue = tryJsonParse(target.BeforeValue);
         }
@@ -466,6 +470,28 @@ export class TemplateAndChangeSetDiffMerger {
     }
 
     return importedResourceLogicalIds;
+  }
+}
+
+/**
+ * The template property that a change set detail describes.
+ *
+ * Property changes are reported with `Target.Attribute === 'Properties'` and the property name in
+ * `Target.Name`. Tag changes are reported separately with `Target.Attribute === 'Tags'` and no
+ * name, but they are changes to the resource's `Tags` property. Without mapping them, a `Tags`
+ * difference that contains a deploy-time value (e.g. `{ Ref: 'EcsCluster' }`) is treated as
+ * "not in the change set" and hidden, even though a static tag in the same list changed.
+ *
+ * Returns `undefined` for details that do not describe a property (e.g. `Metadata`).
+ */
+function changeSetPropertyName(detail: ChangeSetResourceChangeDetail): string | undefined {
+  switch (detail.Target?.Attribute) {
+    case 'Properties':
+      return detail.Target.Name || undefined;
+    case 'Tags':
+      return 'Tags';
+    default:
+      return undefined;
   }
 }
 
