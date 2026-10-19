@@ -3,6 +3,7 @@
 import type { DescribeChangeSetOutput as DescribeChangeSet, ResourceChange as RC, ResourceChangeDetail as RCD } from '@aws-sdk/client-cloudformation';
 import { diffResource } from '../diff';
 import * as types from '../diff/types';
+import { deepEqual } from '../diff/util';
 
 export type DescribeChangeSetOutput = DescribeChangeSet;
 type ChangeSetResourceChangeDetail = RCD;
@@ -530,7 +531,36 @@ function contextProperties(context: string | object | undefined): { [name: strin
  * textual difference in the template.
  */
 function propertyIsResolvedAtDeployTime(difference: types.Difference<any>): boolean {
-  return containsDeployTimeValue(difference.oldValue) || containsDeployTimeValue(difference.newValue);
+  return changedPartContainsDeployTimeValue(difference.oldValue, difference.newValue);
+}
+
+/**
+ * Like `containsDeployTimeValue`, but only looks at the parts of the value that differ.
+ *
+ * A `Ref` in an unchanged part of the property (e.g. another element of a `Tags` list) does not
+ * make a static change to a sibling deploy-time resolved.
+ */
+function changedPartContainsDeployTimeValue(oldValue: any, newValue: any): boolean {
+  if (deepEqual(oldValue, newValue)) {
+    return false;
+  }
+  if (Array.isArray(oldValue) && Array.isArray(newValue) && oldValue.length === newValue.length) {
+    return oldValue.some((old, i) => changedPartContainsDeployTimeValue(old, newValue[i]));
+  }
+  const isObject = (v: any) => typeof v === 'object' && v !== null && !Array.isArray(v);
+  if (isObject(oldValue) && isObject(newValue)) {
+    const keys = new Set([...Object.keys(oldValue), ...Object.keys(newValue)]);
+    for (const key of keys) {
+      if (key === 'Ref' || key.startsWith('Fn::')) {
+        return true;
+      }
+      if (changedPartContainsDeployTimeValue(oldValue[key], newValue[key])) {
+        return true;
+      }
+    }
+    return false;
+  }
+  return containsDeployTimeValue(oldValue) || containsDeployTimeValue(newValue);
 }
 
 function containsDeployTimeValue(value: any): boolean {

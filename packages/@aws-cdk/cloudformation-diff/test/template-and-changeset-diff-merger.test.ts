@@ -97,6 +97,30 @@ describe('fullDiff tests that include changeset', () => {
     expect(webAcl.propertyUpdates.DefaultAction.isDifferent).toBe(true);
   });
 
+  test('static change to one tag is not hidden by an unchanged Ref in a sibling tag', () => {
+    // GIVEN - CFN returns an empty changeset for a tag-only change on an instance
+    const template = (role: string) => ({
+      Resources: {
+        Instance: {
+          Type: 'AWS::EC2::Instance',
+          Properties: {
+            Tags: [
+              { Key: 'ecs_cluster', Value: { Ref: 'EcsCluster' } },
+              { Key: 'role', Value: role },
+            ],
+          },
+        },
+      },
+    });
+
+    // WHEN
+    const differences = fullDiff(template('logprocessor'), template('redis'), { Changes: [] });
+
+    // THEN - the static tag change is still surfaced
+    expect(differences.differenceCount).toBe(1);
+    expect(differences.resources.get('Instance').propertyUpdates.Tags.isDifferent).toBe(true);
+  });
+
   test('changeset replacements are respected', () => {
     // GIVEN
     const currentTemplate = {
